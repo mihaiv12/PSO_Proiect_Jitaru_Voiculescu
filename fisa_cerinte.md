@@ -7,10 +7,15 @@
 
 ## Descrierea Proiectului
   Remote Administration Tool:
+  
     - Server centralizator
+    
     - Mai multi agenti care coleacteaza date de pe calculatoare
+    
     - Poate executa comenzi pe mai multe calculatoare simultan
+    
     - Screenshot-uri/live stream
+    
     - Alerte accesare anumite site-uri
 
 ## Contribuitori
