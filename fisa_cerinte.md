@@ -3,9 +3,7 @@
 
 ---
 
-## 1. Introducere și Arhitectură Generală
-
-## Descrierea Proiectului
+## 1. Descrierea Proiectului
   Remote Administration Tool:
   
     - Server centralizator
