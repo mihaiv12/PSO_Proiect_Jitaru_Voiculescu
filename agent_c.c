@@ -1,29 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <ctype.h>
 #include <signal.h>
 #include <stdint.h>
-
-#ifndef _WIN32
-    #include <unistd.h>
-    #include <sys/socket.h>
-    #include <arpa/inet.h>
-    #include <dirent.h>
-    #include <pwd.h>
-    #include <sys/utsname.h>
-#else
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #if defined(_MSC_VER)
-        typedef intptr_t ssize_t;
-    #endif
-#endif
+#include <dirent.h>
+#include <pwd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <sys/utsname.h>
 
 // ==========================================
-// 1. MODELE DE DATE (Model)
+// 1. STRUCTURI DE DATE (Modele)
 // ==========================================
 
 struct SystemInfo {
@@ -46,7 +35,7 @@ struct ProcessInfo {
     unsigned long long ctime;
 };
 
-static volatile int g_running = 1;
+static int g_running = 1;
 
 void handle_sigint(int sig) {
     (void)sig;
@@ -55,13 +44,14 @@ void handle_sigint(int sig) {
 }
 
 // ==========================================
-// 2. COLECTARE DATE DIN /proc (Collectors)
+// 2. COLECTARE DATE DIN /proc
 // ==========================================
 
+// Citeste timpii procesorului din /proc/stat
 void get_cpu_times(unsigned long long* idle, unsigned long long* total) {
     *idle = 0;
     *total = 0;
-#ifndef _WIN32
+
     FILE* f = fopen("/proc/stat", "r");
     if (!f) return;
 
@@ -73,29 +63,27 @@ void get_cpu_times(unsigned long long* idle, unsigned long long* total) {
         *total = user + nice + system + idle_t + iowait + irq + softirq + steal;
     }
     fclose(f);
-#endif
 }
 
+// Calculeaza procentul CPU facand diferenta intre doua masuratori
 double get_cpu_percent(void) {
-#ifndef _WIN32
     unsigned long long idle1, total1, idle2, total2;
     get_cpu_times(&idle1, &total1);
-    usleep(100000); // pauza de 100 ms
+    usleep(100000);
     get_cpu_times(&idle2, &total2);
 
     unsigned long long diff_total = total2 - total1;
     unsigned long long diff_idle = idle2 - idle1;
+
     if (diff_total == 0) return 0.0;
     return (1.0 - (double)diff_idle / (double)diff_total) * 100.0;
-#else
-    return 5.0;
-#endif
 }
 
+// Citeste memoria RAM din /proc/meminfo
 void get_memory_info(long* total_mb, long* used_mb) {
     *total_mb = 0;
     *used_mb = 0;
-#ifndef _WIN32
+
     FILE* f = fopen("/proc/meminfo", "r");
     if (!f) return;
 
@@ -112,30 +100,26 @@ void get_memory_info(long* total_mb, long* used_mb) {
 
     *total_mb = mem_total / 1024;
     *used_mb = (mem_total - mem_avail) / 1024;
-#else
-    *total_mb = 8192;
-    *used_mb = 4096;
-#endif
 }
 
+// Citeste timpul de functionare din /proc/uptime
 long get_system_uptime(void) {
-#ifndef _WIN32
     FILE* f = fopen("/proc/uptime", "r");
     if (!f) return 0;
+
     double up = 0;
     if (fscanf(f, "%lf", &up) == 1) {
         fclose(f);
         return (long)up;
     }
     fclose(f);
-#endif
     return 0;
 }
 
+// Aduna toate informatiile despre sistem
 void collect_system_info(struct SystemInfo* info) {
     memset(info, 0, sizeof(*info));
 
-#ifndef _WIN32
     if (gethostname(info->hostname, sizeof(info->hostname)) != 0) {
         strncpy(info->hostname, "linux-host", sizeof(info->hostname) - 1);
     }
@@ -153,21 +137,16 @@ void collect_system_info(struct SystemInfo* info) {
     } else {
         strncpy(info->user, "unknown", sizeof(info->user) - 1);
     }
-#else
-    strncpy(info->hostname, "localhost", sizeof(info->hostname) - 1);
-    strncpy(info->os_name, "Windows", sizeof(info->os_name) - 1);
-    strncpy(info->user, "user", sizeof(info->user) - 1);
-#endif
 
     info->cpu_percent = get_cpu_percent();
     get_memory_info(&info->ram_total_mb, &info->ram_used_mb);
     info->uptime_seconds = get_system_uptime();
 }
 
-// Citeste proprietarul unui PID din /proc/[pid]/status
+// Citeste proprietarul unui proces din /proc/[pid]/status
 void get_pid_username(int pid, char* out_user, size_t max_len) {
     strncpy(out_user, "unknown", max_len - 1);
-#ifndef _WIN32
+
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/status", pid);
     FILE* f = fopen(path, "r");
@@ -189,9 +168,6 @@ void get_pid_username(int pid, char* out_user, size_t max_len) {
         }
     }
     fclose(f);
-#else
-    (void)pid;
-#endif
 }
 
 // Citeste datele unui proces din /proc/[pid]/stat
@@ -199,7 +175,6 @@ int read_process_stat(int pid, struct ProcessInfo* proc) {
     memset(proc, 0, sizeof(*proc));
     proc->pid = pid;
 
-#ifndef _WIN32
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/stat", pid);
     FILE* f = fopen(path, "r");
@@ -222,7 +197,7 @@ int read_process_stat(int pid, struct ProcessInfo* proc) {
     strncpy(proc->name, open_p + 1, name_len);
     proc->name[name_len] = '\0';
 
-    // Extragem starea, utime, stime si starttime (ctime) dupa paranteza
+    // Extragem starea, utime, stime si starttime dupa paranteza
     char state = '?';
     int ppid, pgrp, session, tty_nr, tpgid;
     unsigned long flags, minflt, cminflt, majflt, cmajflt;
@@ -243,16 +218,10 @@ int read_process_stat(int pid, struct ProcessInfo* proc) {
 
     get_pid_username(pid, proc->user, sizeof(proc->user));
     return 1;
-#else
-    strncpy(proc->name, "init", sizeof(proc->name) - 1);
-    proc->state = 'S';
-    strncpy(proc->user, "root", sizeof(proc->user) - 1);
-    return 1;
-#endif
 }
 
 // ==========================================
-// 3. CAPTURA DE ECRAN (Screenshot)
+// 3. CAPTURA DE ECRAN (Imagine BMP simpla)
 // ==========================================
 
 unsigned char* generate_placeholder_bmp(int* out_size) {
@@ -283,13 +252,13 @@ unsigned char* generate_placeholder_bmp(int* out_size) {
     memcpy(&bmp[28], &bpp, 2);
     memcpy(&bmp[34], &image_size, 4);
 
-    // Desenam un gradient albastru simplu
+    // Desenam un gradient albastru de test
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             int idx = 54 + y * row_stride + x * 3;
-            bmp[idx] = (unsigned char)(x % 255);     // Blue
-            bmp[idx + 1] = (unsigned char)(y % 255); // Green
-            bmp[idx + 2] = 40;                       // Red
+            bmp[idx] = (unsigned char)(x % 255);
+            bmp[idx + 1] = (unsigned char)(y % 255);
+            bmp[idx + 2] = 40;
         }
     }
 
@@ -298,19 +267,10 @@ unsigned char* generate_placeholder_bmp(int* out_size) {
 }
 
 // ==========================================
-// 4. RETEA SI PROTOCOL SIMPLU (Network)
+// 4. RETEA (Socket TCP)
 // ==========================================
 
 int connect_to_server(const char* ip, int port) {
-#ifdef _WIN32
-    static int wsa_init = 0;
-    if (!wsa_init) {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-        wsa_init = 1;
-    }
-#endif
-
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return -1;
 
@@ -321,25 +281,11 @@ int connect_to_server(const char* ip, int port) {
     inet_pton(AF_INET, ip, &serv_addr.sin_addr);
 
     if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-#ifndef _WIN32
         close(sock);
-#else
-        closesocket(sock);
-#endif
         return -1;
     }
 
     return sock;
-}
-
-void close_socket(int sock) {
-    if (sock >= 0) {
-#ifndef _WIN32
-        close(sock);
-#else
-        closesocket(sock);
-#endif
-    }
 }
 
 int send_text(int sock, const char* text) {
@@ -363,7 +309,7 @@ int send_binary(int sock, const unsigned char* data, int size) {
 }
 
 // ==========================================
-// 5. LOGICA PRINCIPALA A AGENTULUI (Main loop)
+// 5. RAPOARTE CATRE SERVER
 // ==========================================
 
 void send_system_report(int sock, const char* agent_id) {
@@ -386,7 +332,6 @@ void send_process_report(int sock, const char* agent_id) {
     int count = 0;
     snprintf(packet, sizeof(packet), "PROCS|%s|", agent_id);
 
-#ifndef _WIN32
     DIR* dir = opendir("/proc");
     if (dir) {
         struct dirent* entry;
@@ -409,10 +354,6 @@ void send_process_report(int sock, const char* agent_id) {
         }
         closedir(dir);
     }
-#else
-    strcat(packet, "1:init:S:root:100:50:1;");
-    count = 1;
-#endif
 
     printf("  [Procese] Trimis informatii despre %d procese active\n", count);
     send_text(sock, packet);
@@ -434,16 +375,82 @@ void send_screen_report(int sock, const char* agent_id) {
 }
 
 // ==========================================
-// 6. ENTRY POINT
+// 6. MOD TEST LOCAL (STANDALONE FARA SERVER)
+// ==========================================
+
+void run_standalone(void) {
+    printf("\n========================================\n");
+    printf("   MOD TEST LOCAL (STANDALONE)\n");
+    printf("========================================\n\n");
+
+    // 1. Telemetrie sistem
+    struct SystemInfo sys;
+    collect_system_info(&sys);
+    printf("[1] Informatii Sistem:\n");
+    printf("    Hostname       : %s\n", sys.hostname);
+    printf("    Sistem Operare : %s\n", sys.os_name);
+    printf("    Utilizator     : %s\n", sys.user);
+    printf("    Uptime         : %ld secunde (%ld minute)\n", sys.uptime_seconds, sys.uptime_seconds / 60);
+    printf("    CPU Utilizat   : %.2f%%\n", sys.cpu_percent);
+    printf("    Memorie RAM    : %ld MB folositi din %ld MB total\n\n", sys.ram_used_mb, sys.ram_total_mb);
+
+    // 2. Procese
+    printf("[2] Scanare Procese (/proc):\n");
+    printf("    %-7s %-20s %-6s %-12s %-8s %-8s\n", "PID", "NUME", "STARE", "USER", "UTIME", "STIME");
+    printf("    ------------------------------------------------------------------\n");
+
+    DIR* dir = opendir("/proc");
+    int count = 0;
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL && count < 15) {
+            if (isdigit(entry->d_name[0])) {
+                int pid = atoi(entry->d_name);
+                struct ProcessInfo proc;
+                if (read_process_stat(pid, &proc)) {
+                    printf("    %-7d %-20s %-6c %-12s %-8lu %-8lu\n",
+                           proc.pid, proc.name, proc.state, proc.user, proc.utime, proc.stime);
+                    count++;
+                }
+            }
+        }
+        closedir(dir);
+    }
+    printf("    (Afisate %d procese active)\n\n", count);
+
+    // 3. Captura ecran
+    printf("[3] Generare Captura Ecran BMP:\n");
+    int bmp_size = 0;
+    unsigned char* bmp = generate_placeholder_bmp(&bmp_size);
+    if (bmp) {
+        FILE* fp = fopen("screenshot_local.bmp", "wb");
+        if (fp) {
+            fwrite(bmp, 1, bmp_size, fp);
+            fclose(fp);
+            printf("    Imagine salvata pe disc ca 'screenshot_local.bmp' (%d octeti)\n", bmp_size);
+        }
+        free(bmp);
+    }
+    printf("\n[OK] Toate functionalitatile agentului au rulat cu succes local!\n");
+}
+
+// ==========================================
+// 7. PUNCT DE INTRARE (main)
 // ==========================================
 
 int main(int argc, char* argv[]) {
+    // Daca rulam cu --standalone sau -s, afisam doar datele locale fara retea
+    if (argc > 1 && (strcmp(argv[1], "--standalone") == 0 || strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "local") == 0)) {
+        run_standalone();
+        return 0;
+    }
+
     const char* agent_id = "agent_c_01";
     const char* server_ip = "127.0.0.1";
     int server_port = 9000;
     int interval_sec = 5;
 
-    // Sintaxa linie de comanda: ./agent_c [agent_id] [ip] [port] [interval]
+    // Parametri linie de comanda: ./agent_c [agent_id] [ip] [port] [interval]
     if (argc > 1) agent_id = argv[1];
     if (argc > 2) server_ip = argv[2];
     if (argc > 3) server_port = atoi(argv[3]);
@@ -453,7 +460,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, handle_sigint);
 
     printf("========================================\n");
-    printf("  Agent Minimal Linux (Scris in C)\n");
+    printf("  Agent\n");
     printf("  ID Agent : %s\n", agent_id);
     printf("  Server   : %s:%d\n", server_ip, server_port);
     printf("  Interval : %d secunde\n", interval_sec);
@@ -462,52 +469,47 @@ int main(int argc, char* argv[]) {
     int sock = -1;
     int cycle = 0;
 
-    // Bucla principala de functionare si reconectare automata
+    // Bucla principala: trimite date si se reconecteaza daca este nevoie
     while (g_running) {
-        // 1. Daca nu este conectat, incercam reconectarea la server
+        // 1. Daca nu este conectat, incercam conectarea la server
         if (sock < 0) {
             printf("[CONECTARE] Incercare de conectare la %s:%d...\n", server_ip, server_port);
             sock = connect_to_server(server_ip, server_port);
             if (sock < 0) {
                 printf("[CONECTARE] Serverul nu raspunde. Reincercare in 3 secunde...\n");
-#ifndef _WIN32
                 sleep(3);
-#else
-                Sleep(3000);
-#endif
                 continue;
             }
 
             printf("[CONECTARE] Conectat la server cu succes!\n");
+            
             // Trimitem mesajul de inregistrare
             char reg_msg[128];
             snprintf(reg_msg, sizeof(reg_msg), "REGISTER|%s", agent_id);
             if (!send_text(sock, reg_msg)) {
-                close_socket(sock);
+                close(sock);
                 sock = -1;
                 continue;
             }
         }
 
-        // 2. Trimitem raportul de telemetrie si procese
+        // 2. Trimitem raportul de telemetrie si lista de procese
         send_system_report(sock, agent_id);
         send_process_report(sock, agent_id);
 
-        // 3. Trimitem o captura de ecran la fiecare 3 cicluri
+        // 3. Trimitem o captura de ecran o data la fiecare 3 cicluri
         cycle++;
         if (cycle % 3 == 0) {
             send_screen_report(sock, agent_id);
         }
 
-        // 4. Pauza pana la urmatorul ciclu
-#ifndef _WIN32
+        // 4. Asteptam pana la urmatoarea raportare
         sleep(interval_sec);
-#else
-        Sleep(interval_sec * 1000);
-#endif
     }
 
-    close_socket(sock);
+    if (sock >= 0) {
+        close(sock);
+    }
     printf("[AGENT] Terminat curat.\n");
     return 0;
 }
