@@ -1,13 +1,3 @@
-/**
- * agent_c.c - Agent de monitorizare minimal pentru Linux, scris in C (C99/POSIX).
- * 
- * Functionalitati:
- *  - Colecteaza date despre sistem din /proc (CPU, RAM, Uptime, utilizator, hostname)
- *  - Scaneaza procesele active din /proc/[pid]/stat (PID, nume, stare, utime, stime, ctime, proprietar)
- *  - Suport pentru captura de ecran (cu fallback pe generare BMP in memorie)
- *  - Mecanism simplu de reconectare automata la server prin socket TCP
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
